@@ -1,0 +1,99 @@
+version: "3"
+services:
+
+  wpv1-nginx-service:
+    container_name: wpv1-nginx
+    image: 127.0.0.1:5000/wpv1-nginx-image:latest
+    working_dir: /var/www/html
+    ports:
+      - "9999:443"
+      - "8888:80"
+    volumes:
+      - wpv1-nfs-nginx-logs-volume:/var/log/nginx
+      - wpv1-nfs-app-volume://var/www/html
+      - ./docker/nginx/certs:/etc/nginx/ssl/certs
+    networks:
+      - wpv1-network
+    healthcheck:
+      test: [ "CMD-SHELL", "ps -u 1333 | grep nginx || exit 1" ]
+
+  wpv1-php-service:
+    container_name: wpv1-php
+    image: 127.0.0.1:5000/wpv1-php-image:latest
+    working_dir: /var/www/html
+    volumes:
+      - wpv1-nfs-app-volume:/var/www/html
+    networks:
+      - wpv1-network
+    healthcheck:
+      test: [ "CMD-SHELL", "ps -u 1333 | grep fpm || exit 1" ]
+
+  wpv1-mariadb-service:
+    container_name: wpv1-mariadb
+    image: 127.0.0.1:5000/wpv1-mariadb-image:latest
+    user: root
+    volumes:
+      - wpv1-nfs-mariadb-volume:/var/lib/mysql
+      - wpv1-nfs-mariadb-logs-volume:/var/log/mysql
+    expose:
+      - "3306"
+    ports:
+      - "3306:3306"
+    networks:
+      - wpv1-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "healthcheck.sh --su-mysql --connect --innodb_initialized || exit 1"
+        ]
+
+  wpv1-phpmyadmin-service:
+    container_name: wpv1-phpmyadmin
+    image: 127.0.0.1:5000/wpv1-phpmyadmin-image:latest
+    ports:
+      - 8881:80
+    networks:
+      - wpv1-network
+
+  wpv1-wpcli-service:
+    container_name: wpv1-wpcli
+    image: 127.0.0.1:5000/wpv1-wpcli-image:latest
+    working_dir: /var/www/html
+    volumes:
+      - wpv1-nfs-app-volume:/var/www/html
+      - ./docker/.env:/.env
+      - ./docker/wp-cli/entrypoint.sh:/entrypoint
+    networks:
+      - wpv1-network
+    entrypoint: [ "/bin/bash", "/entrypoint" ]
+
+networks:
+  wpv1-network:
+    driver: overlay
+
+volumes:
+  wpv1-nfs-app-volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=10.1.3.127,nolock,noacl,nocto,rw,intr,rsize=1048576,wsize=1048576,nfsvers=4"
+      device: ":/project/wpv1/wordpress"
+  wpv1-nfs-nginx-logs-volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=10.1.3.127,nolock,noacl,nocto,rw,intr,rsize=1048576,wsize=1048576,nfsvers=4"
+      device: ":/project/wpv1/logs/nginx"
+  wpv1-nfs-mariadb-logs-volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=10.1.3.127,nolock,noacl,nocto,rw,intr,rsize=1048576,wsize=1048576,nfsvers=4"
+      device: ":/project/wpv1/mariadb/logs"
+  wpv1-nfs-mariadb-volume:
+    driver: local
+    driver_opts:
+      type: "nfs"
+      o: "addr=10.1.3.127,nolock,noacl,nocto,rw,intr,rsize=1048576,wsize=1048576,nfsvers=4"
+      device: ":/project/wpv1/mariadb/data"

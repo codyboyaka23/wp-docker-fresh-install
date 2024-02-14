@@ -1,0 +1,171 @@
+version: "3.7"
+services:
+
+  wpv1-nginx-service:
+    container_name: wpv1-nginx
+    image: 127.0.0.1:5000/wpv1-nginx-image
+    build:
+      context: .
+      dockerfile: ./docker/nginx/Dockerfile
+      args:
+        WORDPRESS_DIR: ${WORDPRESS_DIR}
+        SHARED_USER: ${SHARED_USER}
+        SHARED_GROUP: ${SHARED_GROUP}
+        SHARED_UID: ${SHARED_UID}
+        SHARED_GID: ${SHARED_GID}
+        HTTPS: ${HTTPS}
+        FORWARDED_HTTP_PORT: ${FORWARDED_HTTP_PORT}
+        FORWARDED_HTTPS_PORT: ${FORWARDED_HTTPS_PORT}
+        PHPFPM_PORT: ${PHPFPM_PORT}
+        PHPFPM_SERVICE_NAME: ${PHPFPM_SERVICE_NAME}
+    working_dir: ${WORDPRESS_DIR}
+    ports:
+      - "${HTTPS_PORT}:${FORWARDED_HTTPS_PORT}"
+      - "${HTTP_PORT}:${FORWARDED_HTTP_PORT}"
+    volumes:
+      - wpv1-nfs-nginx-logs-volume:/var/log/nginx
+      - wpv1-nfs-app-volume:/${WORDPRESS_DIR}
+      - ./docker/nginx/certs:/etc/nginx/ssl/certs
+    depends_on:
+      wpv1-php-service:
+        condition: service_started
+    networks:
+      - wpv1-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "ps -u ${SHARED_UID} | grep nginx || exit 1"
+        ]
+
+  wpv1-php-service:
+    container_name: wpv1-php
+    image: 127.0.0.1:5000/wpv1-php-image
+    build:
+      context: .
+      dockerfile: ./docker/php/Dockerfile
+      args:
+        WORDPRESS_DIR: ${WORDPRESS_DIR}
+        SHARED_USER: ${SHARED_USER}
+        SHARED_GROUP: ${SHARED_GROUP}
+        SHARED_UID: ${SHARED_UID}
+        SHARED_GID: ${SHARED_GID}
+        DEBUG: ${DEBUG}
+        PHPFPM_MAX_CHILDREN: ${PHPFPM_MAX_CHILDREN}
+        PHPFPM_PM: ${PHPFPM_PM}
+        PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT}
+        PHP_MAX_EXECUTION_TIME: ${PHP_MAX_EXECUTION_TIME}
+        PHP_UPLOAD_MAX_FILESIZE: ${PHP_UPLOAD_MAX_FILESIZE}
+        PHP_POST_MAX_SIZE: ${PHP_POST_MAX_SIZE}
+        PHP_MAX_INPUT_TIME: ${PHP_MAX_INPUT_TIME}
+    working_dir: ${WORDPRESS_DIR}
+    volumes:
+      - wpv1-nfs-app-volume:${WORDPRESS_DIR}
+    depends_on:
+      - wpv1-mariadb-service
+    networks:
+      - wpv1-network
+    healthcheck:
+      test: [ "CMD-SHELL", "ps -u ${SHARED_UID} | grep fpm || exit 1" ]
+
+  wpv1-mariadb-service:
+    container_name: wpv1-mariadb
+    image: 127.0.0.1:5000/wpv1-mariadb-image
+    build:
+      context: .
+      dockerfile: ./docker/database/Dockerfile
+    user: root
+    volumes:
+      - wpv1-nfs-mariadb-volume:/var/lib/mysql
+      - wpv1-nfs-mariadb-logs-volume:/var/log/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_USER: ${WORDPRESS_DB_USER}
+      MYSQL_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      MYSQL_DATABASE: ${WORDPRESS_DB_NAME}
+    expose:
+      - "3306"
+    ports:
+      - "3306:3306"
+    networks:
+      - wpv1-network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "healthcheck.sh --su-mysql --connect --innodb_initialized || exit 1"
+        ]
+
+  wpv1-phpmyadmin-service:
+    container_name: wpv1-phpmyadmin
+    image: 127.0.0.1:5000/wpv1-phpmyadmin-image
+    build:
+      context: .
+      dockerfile: ./docker/phpmyadmin/Dockerfile
+    depends_on:
+      - wpv1-mariadb-service
+    ports:
+      - ${PHPMYADMIN_PORT}:80
+    environment:
+      MYSQL_USERNAME: ${MYSQL_ROOT}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      PMA_HOST: ${WORDPRESS_DB_HOST}
+      PMA_ARBITRARY: 1
+    networks:
+      - wpv1-network
+
+  wpv1-wpcli-service:
+    container_name: wpv1-wpcli
+    image: 127.0.0.1:5000/wpv1-wpcli-image
+    build:
+      context: .
+      dockerfile: ./docker/wp-cli/Dockerfile
+      args:
+        WORDPRESS_DIR: ${WORDPRESS_DIR}
+        SHARED_USER: ${SHARED_USER}
+        SHARED_GROUP: ${SHARED_GROUP}
+        SHARED_UID: ${SHARED_UID}
+        SHARED_GID: ${SHARED_GID}
+    working_dir: $WORDPRESS_DIR
+    volumes:
+      - wpv1-nfs-app-volume:${WORDPRESS_DIR}
+      - ./docker/.env:/.env
+      - ./docker/wp-cli/entrypoint.sh:/entrypoint
+    depends_on:
+      wpv1-mariadb-service:
+        condition: service_healthy
+      wpv1-php-service:
+        condition: service_healthy
+    networks:
+      - wpv1-network
+    entrypoint: [ "/bin/bash", "/entrypoint" ]
+
+networks:
+  wpv1-network:
+    driver: bridge
+
+volumes:
+  wpv1-nfs-app-volume:
+    driver: local
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "./wordpress"
+  wpv1-nfs-nginx-logs-volume:
+    driver: local
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "./logs/nginx"
+  wpv1-nfs-mariadb-logs-volume:
+    driver: local
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "./mariadb/logs"
+  wpv1-nfs-mariadb-volume:
+    driver: local
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "./mariadb/data"
